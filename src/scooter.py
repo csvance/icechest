@@ -3,6 +3,7 @@ import rospy
 import Jetson.GPIO
 import serial
 import smbus
+import numpy as np
 
 from geometry_msgs.msg import Quaternion, Twist
 from nav_msgs.msg import Odometry
@@ -16,11 +17,24 @@ class Scooter(object):
         port = rospy.get_param('~serial_port', '/dev/ttyS0')
         self.uart = serial.Serial(port, 115200, timeout=1)
 
-        self.r = rospy.Rate(10)
+        rate = 100
+        self.dt = 1/float(rate)
+        self.r = rospy.Rate(rate)
 
         self.velocity_set = 0
 
         self.velocity_last = None
+
+        self.x = 0.
+        self.y = 0.
+        self.theta = 0.
+
+        # k is the constant of proportionality for the differential equation dtheta/dt = k*phi*T
+        # Where phi is the steering angle, T is the linear translation
+        # TODO: Solve for k
+        self.k = 1.
+        # Steering angle (variable)
+        self.phi = 0.
 
     def _connect(self):
 
@@ -117,12 +131,23 @@ class Scooter(object):
             velocity = int(message[4]) * 100 + int(message[5]) * 10 + int(message[6]) * 1
 
             if self.velocity_last is not None:
-                
+                # Integrate to find linear translation
+                linear_translation = 1/2. * self.dt * velocity + self.velocity_last * self.dt
+
+                delta_theta = (self.k * self.phi) * linear_translation * self.dt
+
+                midpoint_theta = (self.theta + self.theta + delta_theta) / 2.
+
+                # Rotate linear translation with midpoint theta
+                delta_vector = np.array([linear_translation * np.cos(midpoint_theta),
+                                         linear_translation * np.sin(midpoint_theta)])
+
+                # Update position and pose
+                self.x += delta_vector[0]
+                self.y += delta_vector[1]
+                self.theta += delta_theta
 
             self.velocity_last = velocity
-
-
-            pass
 
     def run(self):
 
